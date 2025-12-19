@@ -1,0 +1,16 @@
+# Pokemon Product Watchlist
+# Add product URLs (one per line)
+# Lines starting with # are comments
+
+# INSTRUCTIONS:
+# 1. Find products you want on Target, Best Buy, Pokemon Center, or GameStop
+# 2. Copy the full URL
+# 3. Paste it below (one URL per line)
+# 4. Run: python stock_monitor.py
+
+# Example format (replace with real URLs):
+# https://www.target.com/p/pokemon-tcg-prismatic-evolutions-elite-trainer-box/-/A-12345678
+# https://www.bestbuy.com/site/pokemon-tcg-prismatic-evolutions-booster-bundle/6789012.p
+# https://www.pokemoncenter.com/product/290-12345/pokemon-tcg-prismatic-evolutions-booster-box
+
+# Add your product URLs below:

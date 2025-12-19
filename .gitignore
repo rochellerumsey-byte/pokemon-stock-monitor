@@ -1,0 +1,24 @@
+# Logs and data
+stock_log.txt
+restock_history.json
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# User config (if they add sensitive info)
+config_local.py
