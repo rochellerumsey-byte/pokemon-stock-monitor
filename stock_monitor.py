@@ -9,19 +9,32 @@ import json
 import os
 import subprocess
 import webbrowser
+import random
 from datetime import datetime
 from bs4 import BeautifulSoup
 from config import *
 
-# User agent to mimic real browser
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Connection': 'keep-alive',
-    'Upgrade-Insecure-Requests': '1'
-}
+# Multiple user agents to rotate (avoid detection)
+USER_AGENTS = [
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+]
+
+def get_headers():
+    """Get headers with random user agent"""
+    return {
+        'User-Agent': random.choice(USER_AGENTS),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Cache-Control': 'no-cache',  # Bypass cache
+        'Pragma': 'no-cache'  # Bypass cache (old HTTP/1.0)
+    }
 
 def load_watchlist():
     """Load product URLs from watchlist.txt"""
@@ -73,7 +86,12 @@ def detect_store(url):
 def check_stock(url):
     """Check if product is in stock"""
     try:
-        response = requests.get(url, headers=HEADERS, timeout=10)
+        # Add cache-busting timestamp to URL
+        cache_buster = f"{'&' if '?' in url else '?'}_={int(time.time() * 1000)}"
+        url_with_cache_buster = url + cache_buster
+        
+        # Use random user agent each time
+        response = requests.get(url_with_cache_buster, headers=get_headers(), timeout=10)
         
         if response.status_code != 200:
             return {
@@ -344,9 +362,10 @@ def main():
         return
     
     print(f"\n🔍 Monitoring {len(urls)} product(s)")
-    print(f"⏰ Check interval: {CHECK_INTERVAL} seconds")
+    print(f"⏰ Check interval: ~{CHECK_INTERVAL} seconds (randomized to avoid detection)")
     print(f"🔔 Alerts: {'Enabled' if PLAY_SOUND else 'Disabled'}")
     print(f"🚀 Auto-open: {'Enabled' if AUTO_OPEN_BROWSER else 'Disabled'}")
+    print(f"\n🛡️  Anti-detection: User-agent rotation, cache busting, random timing")
     
     # Track previous states
     previous_states = {}
@@ -388,12 +407,21 @@ def main():
                     
                     previous_states[url] = False
                 
-                # Small delay between checks
-                time.sleep(2)
+                # Random delay between checks (avoid patterns)
+                delay = random.uniform(1.5, 3.5)
+                time.sleep(delay)
             
             print("\n" + "━"*60)
-            print(f"⏳ Next check in {CHECK_INTERVAL} seconds... (Ctrl+C to stop)")
-            time.sleep(CHECK_INTERVAL)
+            
+            # Randomize interval (±20%) to avoid patterns
+            variance = CHECK_INTERVAL * 0.2
+            actual_interval = random.uniform(
+                CHECK_INTERVAL - variance,
+                CHECK_INTERVAL + variance
+            )
+            
+            print(f"⏳ Next check in {int(actual_interval)} seconds... (Ctrl+C to stop)")
+            time.sleep(actual_interval)
             
     except KeyboardInterrupt:
         print("\n\n🛑 Monitor stopped by user")
