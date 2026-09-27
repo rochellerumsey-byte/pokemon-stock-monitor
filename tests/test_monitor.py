@@ -12,8 +12,9 @@ from alembic.config import Config
 from sqlalchemy import func, select
 
 from monitor_app import adapters, service
+from monitor_app.config import validate_startup
 from monitor_app.db import AlertHistory, Base, Product, Retailer, StatusHistory, WorkerState, make_engine, session_factory, utcnow
-from monitor_app.web import create_app
+from monitor_app.web import create_app, understandable_error
 from monitor_app.worker import cycle
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -102,7 +103,9 @@ def test_discord_payload_and_attempt(factory, monkeypatch):
     product = Product(id=1, name="Cards", url="https://www.target.com/p/cards", retailer="Target",
                       status="IN_STOCK", price="$49.99")
     payload = service.discord_payload(product, "IN_STOCK")
-    assert "RESTOCK" in payload["content"] and product.url in payload["content"]
+    for expected in ("RESTOCK / IN STOCK", "Cards", "Target", "$49.99",
+                     product.url, "UTC"):
+        assert expected in payload["content"]
     assert payload["embeds"][0]["fields"][-1]["value"] == "$49.99"
     monkeypatch.setenv("DISCORD_WEBHOOK_URL", "https://discord.com/api/webhooks/test")
     with factory() as db:
@@ -132,6 +135,15 @@ def test_web_crud_auth_health(factory, tmp_path, monkeypatch):
         db.add(WorkerState(id=1, heartbeat_at=utcnow(), last_cycle_at=utcnow()))
         db.commit()
     assert client.get("/health").status_code == 200
+    with factory() as db:
+        item = db.get(Product, product_id)
+        item.status = "ERROR"
+        item.error = "HTTP 403"
+        db.commit()
+    page = client.get("/").text
+    assert "The retailer denied access" in page
+    assert "Cards" in page and "Target" in page and "Last checked" in page
+    assert "Send test notification" in page
     assert client.post(f"/products/{product_id}/toggle", data={"csrf": token}).status_code == 302
     with factory() as db:
         assert not db.get(Product, product_id).enabled
@@ -205,3 +217,20 @@ def test_migration_clean_database(tmp_path, monkeypatch):
         assert {"products", "retailers", "status_history", "alert_history", "worker_state"}.issubset(
             set(inspect(connection).get_table_names()))
     engine.dispose()
+
+
+def test_startup_configuration_and_postgres_url():
+    valid = {"DATABASE_URL": "postgres://user:pass@localhost:5432/stock",
+             "ADMIN_PASSWORD": "a-valid-password-123",
+             "SECRET_KEY": "a-valid-secret-key-with-32-characters",
+             "PORT": "8000"}
+    assert validate_startup(valid) == []
+    engine = make_engine(valid["DATABASE_URL"])
+    assert engine.url.drivername == "postgresql+psycopg"
+    engine.dispose()
+    messages = validate_startup({"DATABASE_URL": "sqlite:///monitor.db", "PORT": "wrong"})
+    assert any("PostgreSQL" in message for message in messages)
+    assert any("SECRET_KEY" in message for message in messages)
+    assert any("ADMIN_PASSWORD" in message for message in messages)
+    assert any("PORT" in message for message in messages)
+    assert understandable_error("ConnectionError").startswith("Could not reach")

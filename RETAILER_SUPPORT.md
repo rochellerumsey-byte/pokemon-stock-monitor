@@ -1,6 +1,6 @@
 # Retailer support and validation
 
-Validation date: 2026-09-27. Status labels describe this runtime's live validation, not the existence of adapter code. The five adapter fixture tests passed, but no retailer was confirmed end to end for live stock monitoring here. Run checks from the deployed Railway environment before relying on alerts.
+Validation date: 2026-09-27. **No retailer has been verified for live monitoring.** Status labels describe this runtime's live validation, not the existence of adapter code. Local fixture tests passed, but fixtures are examples and do not confirm current retailer behavior. Run checks from the deployed Railway environment before relying on alerts.
 
 | Retailer | Validation | Direct public page check | Current limitation |
 | --- | --- | --- | --- |

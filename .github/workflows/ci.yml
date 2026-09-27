@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main, codex/reliable-monitor]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: monitor_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d monitor_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/monitor_test
+      ADMIN_PASSWORD: ci-only-admin-password
+      SECRET_KEY: ci-only-secret-key-with-more-than-32-characters
+      SESSION_COOKIE_SECURE: "false"
+      PORT: "8000"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pytest
+      - name: Run complete test suite
+        run: python -m pytest -q
+      - name: Validate PostgreSQL migration
+        run: |
+          python -m alembic upgrade head
+          python -m alembic current
+          python -m alembic check
+      - name: Build production image
+        run: docker build -t pokemon-stock-monitor-ci .
+      - name: Start container and check health
+        run: |
+          docker run -d --name monitor-ci --network host \
+            -e DATABASE_URL -e ADMIN_PASSWORD -e SECRET_KEY \
+            -e SESSION_COOKIE_SECURE -e PORT pokemon-stock-monitor-ci
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:8000/health > /tmp/monitor-health.json; then
+              break
+            fi
+            sleep 2
+          done
+          curl --fail --show-error http://127.0.0.1:8000/health
+      - name: Check restart persistence and worker lock
+        run: |
+          python - <<'PY'
+          from sqlalchemy import text
+          from monitor_app.db import Product, make_engine, session_factory
+          engine = make_engine()
+          with session_factory(engine)() as db:
+              db.add(Product(name="CI persistence check", url="https://www.target.com/p/ci-check",
+                             retailer="Target", enabled=False))
+              db.commit()
+          with engine.connect() as connection:
+              assert connection.scalar(text("SELECT pg_try_advisory_lock(706041321)")) is False
+          engine.dispose()
+          PY
+          docker restart monitor-ci
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:8000/health > /dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl --fail --show-error http://127.0.0.1:8000/health
+          python - <<'PY'
+          import time
+          from sqlalchemy import select, text
+          from monitor_app.db import Product, make_engine, session_factory
+          engine = make_engine()
+          with session_factory(engine)() as db:
+              assert db.scalar(select(Product).where(Product.name == "CI persistence check"))
+          for _ in range(30):
+              with engine.connect() as connection:
+                  acquired = connection.scalar(text("SELECT pg_try_advisory_lock(706041321)"))
+                  if acquired:
+                      connection.execute(text("SELECT pg_advisory_unlock(706041321)"))
+              if not acquired:
+                  break
+              time.sleep(1)
+          else:
+              raise AssertionError("Monitoring worker did not reacquire its PostgreSQL lock")
+          engine.dispose()
+          PY
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs monitor-ci || true
+      - name: Stop container
+        if: always()
+        run: docker rm -f monitor-ci || true

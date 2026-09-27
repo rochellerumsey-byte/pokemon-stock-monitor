@@ -11,6 +11,24 @@ from .db import AlertHistory, Product, Retailer, StatusHistory, WorkerState, mak
 from .service import add_product, add_retailer, send_discord
 
 
+def understandable_error(raw):
+    if not raw:
+        return ""
+    if raw.startswith("HTTP 403"):
+        return "The retailer denied access. We will try again later."
+    if raw.startswith("HTTP 429") or raw.startswith("Rate limited"):
+        return "The retailer asked us to slow down. The next check is delayed."
+    if raw in ("ConnectionError", "ConnectTimeout", "ReadTimeout", "Timeout"):
+        return "Could not reach the retailer. We will try again later."
+    if raw in ("No unambiguous primary product signal", "Empty or unexpected product page"):
+        return "Stock could not be confirmed from this page."
+    if raw == "Retailer challenge or access restriction":
+        return "The retailer restricted this check. We will try again later."
+    if raw.startswith("HTTP "):
+        return "The retailer returned an error (" + raw + "). We will try again later."
+    return raw
+
+
 def create_app(database_url=None, testing=False):
     app = Flask(__name__)
     secret = os.getenv("SECRET_KEY", "")
@@ -25,6 +43,7 @@ def create_app(database_url=None, testing=False):
     engine = make_engine(database_url)
     factory = session_factory(engine)
     app.extensions["db_factory"] = factory
+    app.jinja_env.filters["understandable_error"] = understandable_error
 
     @app.after_request
     def secure_headers(response):
@@ -105,9 +124,11 @@ def create_app(database_url=None, testing=False):
             alerts = db.scalars(select(AlertHistory).order_by(AlertHistory.attempted_at.desc()).limit(10)).all()
             worker = db.get(WorkerState, 1)
         healthy_worker = bool(worker and worker.heartbeat_at and utcnow() - worker.heartbeat_at < timedelta(minutes=2))
+        attention_count = sum(p.enabled and p.status in ("ERROR", "UNKNOWN") for p in products)
         return render_template("dashboard.html", products=products, retailers=retailers, history=history,
                                alerts=alerts, worker=worker, healthy_worker=healthy_worker,
-                               discord_configured=bool(os.getenv("DISCORD_WEBHOOK_URL")))
+                               discord_configured=bool(os.getenv("DISCORD_WEBHOOK_URL")),
+                               attention_count=attention_count)
 
     @app.post("/products")
     @admin

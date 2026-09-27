@@ -35,7 +35,9 @@ def hostname(url):
     if parsed.scheme not in ("http", "https") or parsed.username or parsed.password or parsed.port:
         raise ValueError("Use a public HTTP(S) product URL without credentials or a custom port")
     host = (parsed.hostname or "").lower().rstrip(".")
-    if not host or "." not in host or len(url) > 2048:
+    if len(url) > 1500:
+        raise ValueError("Product URL is too long; use a shorter direct product link")
+    if not host or "." not in host:
         raise ValueError("Invalid product URL")
     return host
 

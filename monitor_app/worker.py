@@ -75,6 +75,7 @@ def main():
             lock = engine.connect()
             try:
                 if lock.scalar(text("SELECT pg_try_advisory_lock(:id)"), {"id": LOCK_ID}):
+                    lock.commit()
                     break
             except Exception:
                 log.exception("worker_lock_attempt_failed")
@@ -86,13 +87,22 @@ def main():
     try:
         while True:
             try:
+                if lock is not None:
+                    # A lost database connection also loses the session lock.
+                    # Exit so the container supervisor restarts and reacquires it.
+                    lock.execute(text("SELECT 1"))
+                    lock.commit()
                 cycle(factory)
             except Exception:
                 log.exception("worker_cycle_failed")
+                if lock is not None and lock.invalidated:
+                    raise
             time.sleep(15)
     finally:
         if lock:
-            lock.execute(text("SELECT pg_advisory_unlock(:id)"), {"id": LOCK_ID})
+            if not lock.invalidated:
+                lock.execute(text("SELECT pg_advisory_unlock(:id)"), {"id": LOCK_ID})
+                lock.commit()
             lock.close()
 
 

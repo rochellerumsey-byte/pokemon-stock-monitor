@@ -75,6 +75,7 @@ def add_retailer(db, name, domain, example_url, in_text, out_text, stock_selecto
 def discord_payload(product, status, at=None, test=False):
     at = at or utcnow()
     label = "TEST NOTIFICATION" if test else "RESTOCK / " + status.replace("_", " ")
+    timestamp = at.strftime("%Y-%m-%d %H:%M UTC")
     fields = [
         {"name": "Retailer", "value": product.retailer, "inline": True},
         {"name": "Status", "value": status.replace("_", " "), "inline": True},
@@ -82,7 +83,9 @@ def discord_payload(product, status, at=None, test=False):
     if product.price:
         fields.append({"name": "Price", "value": product.price, "inline": True})
     return {
-        "content": f"🚨 **{label}**: {product.name}\n**Product link:** {product.url}",
+        "content": (f"🚨 **{label}**\n**Product:** {product.name}\n"
+                    f"**Retailer:** {product.retailer}\n**Price:** {product.price or 'Not available'}\n"
+                    f"**Checked:** {timestamp}\n**Open product:** {product.url}"),
         "embeds": [{
             "title": product.name, "url": product.url, "color": 0x2F8F46,
             "fields": fields, "timestamp": at.isoformat() + "Z",
@@ -98,7 +101,8 @@ def send_discord(db, product=None, history=None, test=False, post=None):
     else:
         try:
             sender = post or requests.post
-            payload = discord_payload(product, product.status if product else "IN_STOCK", test=test) if product else {
+            payload = discord_payload(product, product.status, at=history.checked_at if history else None,
+                                      test=test) if product else {
                 "content": "✅ Pokemon Stock Monitor TEST notification", "allowed_mentions": {"parse": []}}
             response = sender(webhook, json=payload, timeout=10)
             success = 200 <= response.status_code < 300
