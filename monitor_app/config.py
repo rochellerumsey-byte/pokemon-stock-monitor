@@ -26,6 +26,13 @@ def validate_startup(environ=None):
     port = env.get("PORT", "8000")
     if not port.isdigit() or not 1 <= int(port) <= 65535:
         errors.append("PORT must be a number between 1 and 65535; Railway normally sets it.")
+    for key, minimum in (("DISCOVERY_INTERVAL_SECONDS", 300), ("CHECK_INTERVAL_SECONDS", 300)):
+        raw = env.get(key, str(minimum))
+        if not raw.isdigit() or int(raw) < minimum:
+            errors.append(f"{key} must be a whole number of at least {minimum} seconds.")
+    zinc_key = env.get("ZINC_API_KEY", "")
+    if zinc_key and not zinc_key.startswith("zn_test_"):
+        errors.append("ZINC_API_KEY must be a Zinc test-mode key starting with zn_test_; live keys are disabled.")
     return errors
 
 

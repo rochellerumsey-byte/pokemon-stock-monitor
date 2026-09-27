@@ -7,8 +7,10 @@ from datetime import timedelta
 from sqlalchemy import delete, select, text
 
 from .adapters import Result, fetch
-from .db import AlertHistory, Product, StatusHistory, WorkerState, make_engine, session_factory, utcnow
-from .service import apply_result, resolve_adapter, send_discord
+from .db import (AlertHistory, DiscoveredProduct, DiscoverySource, Product, PurchaseAttempt, PurchaseCandidate,
+                 StatusHistory, WorkerState, make_engine, session_factory, utcnow)
+from .service import RESTOCK_FROM, RESTOCK_TO, apply_result, resolve_adapter, send_discord, send_event
+from . import discovery, purchase
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format='{"time":"%(asctime)s","level":"%(levelname)s","message":"%(message)s"}')
 log = logging.getLogger(__name__)
@@ -27,6 +29,33 @@ def cycle(factory):
                  (Product.next_check_at.is_(None)) | (Product.next_check_at <= now))
                  .order_by(Product.next_check_at).limit(25)).all()
         db.commit()
+    # Each source fails independently. An unparseable first scan never consumes its silent baseline.
+    with factory() as db:
+        sources = db.scalars(select(DiscoverySource.id).where(
+            DiscoverySource.enabled.is_(True),
+            (DiscoverySource.next_scan_at.is_(None)) | (DiscoverySource.next_scan_at <= now))
+            .limit(10)).all()
+    for source_id in sources:
+        with factory() as db:
+            source = db.get(DiscoverySource, source_id)
+            try:
+                listings = discovery.fetch_source(source)
+                created = discovery.scan(db, source, listings)
+                for item in created:
+                    if not item.product_type:
+                        continue
+                    product = db.get(Product, item.product_id) if item.product_id else None
+                    send_event(db, "NEW_PRODUCT", product,
+                               f"🆕 **NEW PRODUCT**\n{item.title}\n{item.retailer}\n"
+                               f"{item.price or 'Price unavailable'}\n{item.url}\n"
+                               f"Seen: {item.first_seen_at:%Y-%m-%d %H:%M} UTC")
+            except Exception as exc:
+                db.rollback()
+                source = db.get(DiscoverySource, source_id)
+                source.last_error = str(exc)[:300]
+                source.next_scan_at = utcnow() + timedelta(minutes=30)
+                db.commit()
+                log.exception("discovery_source_failed %s", source_id)
     # Recover a committed transition if the process stopped before delivery.
     with factory() as db:
         pending = db.scalars(select(AlertHistory).where(AlertHistory.detail == "Pending delivery").limit(25)).all()
@@ -43,7 +72,35 @@ def cycle(factory):
             try:
                 _, adapter = resolve_adapter(db, product.url, product.retailer)
                 result = fetch(product.url, adapter)
-                apply_result(db, product, result)
+                history = apply_result(db, product, result)
+                if result.status == "IN_STOCK":
+                    try:
+                        discovery_item = db.scalar(select(DiscoveredProduct).where(
+                            DiscoveredProduct.product_id == product.id,
+                            DiscoveredProduct.baseline.is_(False)).order_by(DiscoveredProduct.id.desc()))
+                        event_key = (f"restock:{history.id}" if history and history.old_status in RESTOCK_FROM
+                                     and history.new_status in RESTOCK_TO else
+                                     f"discovery:{discovery_item.id}" if discovery_item else None)
+                        if event_key and not db.scalar(select(PurchaseCandidate).where(
+                                PurchaseCandidate.event_key == event_key)):
+                            candidate = purchase.evaluate(db, product, event_key)
+                            if candidate and candidate.status == "PENDING_APPROVAL":
+                                send_event(db, "APPROVAL_REQUIRED", product,
+                                           f"🔔 **APPROVAL REQUIRED**\n{product.name}\n{product.retailer}\n"
+                                           f"{product.price}\n{product.url}\nReview in the dashboard.")
+                            elif candidate and candidate.status == "AUTO_BLOCKED":
+                                submitted = purchase.submit_candidate(db, candidate.id)
+                                if submitted.status == "SUBMITTED":
+                                    send_event(db, "PURCHASE_SUBMITTED", product,
+                                               f"🧪 **SANDBOX PURCHASE SUBMITTED**\n{product.name}\n"
+                                               f"{product.retailer}\n{product.price}\n{product.url}")
+                                elif submitted.status == "SUBMISSION_UNKNOWN":
+                                    send_event(db, "PURCHASE_FAILED", product,
+                                               f"⚠️ **SANDBOX PURCHASE OUTCOME UNKNOWN**\n{product.name}\n"
+                                               f"{product.retailer}\nCheck Zinc before retrying.\n{product.url}")
+                    except Exception:
+                        db.rollback()
+                        log.exception("purchase_evaluation_failed %s", product_id)
                 log.info("product_checked %s %s", product_id, result.status)
             except Exception:
                 log.exception("product_check_failed %s", product_id)
@@ -55,6 +112,32 @@ def cycle(factory):
             state = db.get(WorkerState, 1)
             state.heartbeat_at = utcnow()
             db.commit()
+    with factory() as db:
+        # A restart during an external request cannot infer whether Zinc accepted it.
+        # Keep its idempotency key and require reconciliation instead of resubmitting.
+        stranded = db.scalars(select(PurchaseCandidate).where(
+            PurchaseCandidate.status == "SUBMITTING",
+            PurchaseCandidate.submitted_at < utcnow() - timedelta(minutes=2))).all()
+        for candidate in stranded:
+            candidate.status = "SUBMISSION_UNKNOWN"
+            candidate.error = "Submission interrupted; reconcile in Zinc before retrying"
+            attempt = db.scalar(select(PurchaseAttempt).where(PurchaseAttempt.candidate_id == candidate.id))
+            if attempt:
+                attempt.status = "SUBMISSION_UNKNOWN"
+                attempt.error = "Worker restarted during submission"
+                attempt.completed_at = utcnow()
+        db.commit()
+        pending_orders = db.scalars(select(PurchaseCandidate).where(
+            PurchaseCandidate.status.in_(("SUBMITTED", "IN_PROGRESS")),
+            PurchaseCandidate.next_reconcile_at <= utcnow()).limit(20)).all()
+        for candidate in pending_orders:
+            before = candidate.status
+            purchase.reconcile(db, candidate)
+            if candidate.status in ("PLACED", "FAILED") and candidate.status != before:
+                product = db.get(Product, candidate.product_id)
+                send_event(db, "PURCHASED" if candidate.status == "PLACED" else "PURCHASE_FAILED",
+                           product, f"🧪 **SANDBOX {candidate.status}**\n{product.name}\n"
+                           f"{product.retailer}\nOrder: {candidate.provider_order_id}\n{product.url}")
     with factory() as db:
         state = db.get(WorkerState, 1)
         state.heartbeat_at = utcnow()

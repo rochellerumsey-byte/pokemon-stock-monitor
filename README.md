@@ -1,6 +1,6 @@
 # Pokémon Stock Monitor
 
-A private web dashboard that checks public Pokémon TCG product pages and sends Discord notifications on meaningful restock transitions. It does not purchase products or attempt to bypass retailer controls.
+A private web dashboard that checks public Pokémon TCG product pages, discovers listings on configured Target and Best Buy source pages, and sends Discord notifications. Phase 2 includes rule evaluation, owner approval, and Zinc **test-mode-only** order integration. Live purchasing is unavailable. It does not bypass retailer controls.
 
 ## Retailers
 
@@ -8,7 +8,7 @@ Target, Best Buy, Pokémon Center, and GameStop have conservative public-page ad
 
 ## How it works
 
-The Flask dashboard manages products and simple retailer rules. SQLAlchemy and Alembic store products, last known state, status changes, alert attempts, and worker health in PostgreSQL (SQLite locally). One worker checks due products with bounded requests, backoff, and retailer-aware intervals. Adapters parse public pages; uncertain results stay `UNKNOWN` or `ERROR`. Discord alerts are sent only when a previously observed `OUT_OF_STOCK` or `COMING_SOON` product becomes `IN_STOCK` or `PREORDER`. Initial observations do not alert.
+The Flask dashboard manages products, discovery sources, simple retailer selectors, and purchase rules. SQLAlchemy and Alembic persist state in PostgreSQL (SQLite locally). One advisory-locked worker scans configured source pages, checks due products, evaluates rules, and reconciles Zinc test orders. A source's first successful scan is a silent baseline. Later unseen listings are recorded and qualifying sealed TCG products are auto-enrolled for stock checks. A stock check must confirm availability before rule evaluation. Uncertain results stay `UNKNOWN` or `ERROR`. Restock alerts require an observed transition. The sandbox purchase switch starts OFF, and Zinc live keys are rejected.
 
 ## Local setup
 
@@ -20,9 +20,16 @@ The Flask dashboard manages products and simple retailer rules. SQLAlchemy and A
 
 The legacy `watchlist.txt` is no longer used by production. If it contains real URLs, import them once after migration with `python -m monitor_app.import_watchlist watchlist.txt`. The current file contains only comments/examples.
 
+## Phase 2 boundaries
+
+- Discovery uses conservative product-card parsing and stable retailer product IDs. Target and Best Buy discovery is **fixture tested only**; live source pages can change or block requests.
+- Rules can monitor, request approval, or submit **sandbox** orders. Missing price, seller, identity, or confirmed stock blocks the order path. The dashboard approval action rechecks the product page and rules immediately before submission.
+- Zinc requests use a `zn_test_` key, an idempotency key, and a hard total `max_price`. A timed-out submission is marked unknown and never blindly resubmitted. Confirm it in Zinc before any intervention.
+- The dashboard never asks for card data or retailer passwords. No live order path exists in this phase.
+
 ## Tests
 
-Run `python -m pip install pytest` then `python -m pytest -q`. Tests use local fixtures and mocks; they do not poll retailers.
+Run `python -m pip install pytest` then `python -m pytest -q`. Tests use local fixtures and mocks; they do not poll retailers or place Zinc orders.
 
 ## Guides
 

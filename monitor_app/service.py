@@ -36,7 +36,13 @@ def add_product(db, name, url, selected=None):
     retailer, _ = resolve_adapter(db, url, selected)
     if db.scalar(select(Product).where(Product.url == url)):
         raise ValueError("Product URL is already monitored")
-    item = Product(name=name, url=url, retailer=retailer, next_check_at=utcnow())
+    from .discovery import canonical, classify
+    try:
+        retailer_id, _ = canonical(retailer, url)
+    except ValueError:
+        retailer_id = None
+    item = Product(name=name, url=url, retailer=retailer, retailer_product_id=retailer_id,
+                   product_type=classify(name), next_check_at=utcnow())
     db.add(item)
     db.commit()
     return item
@@ -125,20 +131,44 @@ def send_discord(db, product=None, history=None, test=False, post=None):
     return success, detail
 
 
+def send_event(db, kind, product, message, post=None):
+    """Send a concise event and retain its attempt without exposing the webhook."""
+    webhook = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
+    success, detail = False, "Discord webhook is not configured"
+    if webhook:
+        try:
+            response = (post or requests.post)(webhook, json={
+                "content": message, "allowed_mentions": {"parse": []}}, timeout=10)
+            success = 200 <= response.status_code < 300
+            detail = "Delivered" if success else f"Discord HTTP {response.status_code}"
+        except requests.RequestException as exc:
+            detail = type(exc).__name__
+    db.add(AlertHistory(product_id=product.id if product else None,
+                        kind=kind, success=success, detail=detail))
+    db.commit()
+    return success, detail
+
+
 def apply_result(db, product, result: Result, now=None, send=None):
     now = now or utcnow()
     old = product.last_known_status
     product.last_checked = now
     product.status = result.status
     product.error = result.error
+    product.price_confirmed = bool(result.price) and result.status not in ("ERROR", "UNKNOWN")
     alert_history = None
     if result.status in ("ERROR", "UNKNOWN"):
         product.failure_count += 1
     else:
         product.failure_count = 0
         product.last_successful_check = now
+        from .discovery import classify
+        product.observed_title = result.name[:200] if isinstance(result.name, str) and result.name else None
+        product.product_type = classify(product.observed_title) if product.observed_title else None
         if result.price:
             product.price = result.price
+        # Seller is retained only when the current check identifies it.
+        product.seller = result.seller
         if result.status != old:
             alert_history = StatusHistory(product=product, old_status=old, new_status=result.status,
                                           price=product.price, checked_at=now)

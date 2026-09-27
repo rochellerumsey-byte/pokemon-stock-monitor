@@ -11,3 +11,7 @@ Validation date: 2026-09-27. **No retailer has been verified for live monitoring
 | Amazon | BLOCKED/UNSUPPORTED | Public product pages are not treated as a reliable monitoring source. | Adapter always reports `UNAVAILABLE`; it does not evade access controls. |
 
 The tests use sanitized local HTML examples; they do not prove the current live sites expose those signals. An `UNKNOWN`, `ERROR`, or `UNAVAILABLE` observation never triggers a restock notification. A retailer should be called VERIFIED only after a current live public product page yields a correct stock and price result and the same behavior is confirmed on both sides of a stock transition.
+
+## Phase 2 discovery validation
+
+Target and Best Buy listing discovery is **FIXTURE TESTED ONLY**. Local fixture cards verify parsing, canonical retailer IDs, classification, silent baseline, deduplication, and enrollment. No live retailer listing page has been verified as parseable from Railway. Source-page selectors, seller signals, and product IDs need live validation before discovery or purchase candidates are relied upon. Pokémon Center, GameStop, Amazon, and generic retailers have **no discovery adapter** in this phase. Zinc sandbox order tests are mocked; no real Zinc sandbox submission or Discord delivery has been confirmed.

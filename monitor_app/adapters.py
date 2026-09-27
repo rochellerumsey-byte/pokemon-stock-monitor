@@ -28,6 +28,7 @@ class Result:
     price: str | None = None
     error: str | None = None
     retry_after: int | None = None
+    seller: str | None = None
 
 
 def hostname(url):
@@ -112,7 +113,11 @@ def structured(soup):
                 continue
             status = normalize(offers.get("availability", ""))
             if status != "UNKNOWN":
-                return Result(status, product.get("name"), price_value(offers.get("price")))
+                seller = offers.get("seller")
+                if isinstance(seller, dict):
+                    seller = seller.get("name")
+                return Result(status, product.get("name"), price_value(offers.get("price")),
+                              seller=str(seller)[:200] if seller else None)
     return None
 
 
