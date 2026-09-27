@@ -71,10 +71,16 @@ def main():
     factory = session_factory(engine)
     log.info("worker_start")
     if engine.dialect.name == "postgresql":
-        lock = engine.connect()
-        if not lock.scalar(text("SELECT pg_try_advisory_lock(:id)"), {"id": LOCK_ID}):
-            log.warning("worker_lock_held_by_other_process")
-            return
+        while True:
+            lock = engine.connect()
+            try:
+                if lock.scalar(text("SELECT pg_try_advisory_lock(:id)"), {"id": LOCK_ID}):
+                    break
+            except Exception:
+                log.exception("worker_lock_attempt_failed")
+            lock.close()
+            log.info("worker_waiting_for_lock")
+            time.sleep(15)
     else:
         lock = None
     try:
