@@ -82,8 +82,11 @@ def normalize(value):
 def price_value(raw):
     if raw is None:
         return None
-    match = re.search(r"(?:\$\s*)?(\d{1,5}(?:,\d{3})*(?:\.\d{2})?)", str(raw))
-    return "$" + match.group(1).replace(",", "") if match else None
+    value = str(raw).strip()
+    if re.search(r"\b(from|starting at|as low as)\b", value, re.I):
+        return None
+    matches = re.findall(r"(?<!\d)(?:\$\s*)?(\d{1,5}(?:,\d{3})*(?:\.\d{2})?)(?!\d)", value)
+    return "$" + matches[0].replace(",", "") if len(matches) == 1 else None
 
 
 def _products(node):
@@ -108,7 +111,7 @@ def structured(soup):
         for product in _products(data):
             offers = product.get("offers")
             if isinstance(offers, list):
-                offers = next((o for o in offers if isinstance(o, dict) and o.get("availability")), offers[0] if offers else None)
+                offers = offers[0] if len(offers) == 1 else None
             if not isinstance(offers, dict):
                 continue
             status = normalize(offers.get("availability", ""))
@@ -135,7 +138,7 @@ class Adapter:
         title = title.get_text(" ", strip=True) if title else None
         found = structured(soup)
         if found:
-            return Result(found.status, title or found.name, found.price)
+            return Result(found.status, title or found.name, found.price, seller=found.seller)
         controls = soup.select(self.selector)
         signals = set()
         for control in controls:

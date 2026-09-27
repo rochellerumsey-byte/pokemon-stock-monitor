@@ -64,6 +64,10 @@ def test_classification_and_canonical_fixture():
     assert target[0].product_type == "ETB"
     assert target[1].product_type is None
     assert listing("Best Buy")[0].product_type == "Booster Bundle"
+    assert discovery.canonical("Best Buy", "https://www.bestbuy.com/product/pokemon-bundle/6608206")[0] == "6608206"
+    assert discovery.canonical("Best Buy", "https://www.bestbuy.com/site/pokemon-bundle/6608206.p?skuId=6608206")[0] == "6608206"
+    with pytest.raises(ValueError):
+        discovery.canonical("Best Buy", "https://www.bestbuy.com/sale/2026")
     for title, expected in (("Pokemon Center Elite Trainer Box", "Pokemon Center ETB"),
                             ("Pokemon booster box", "Booster Box/Mega Box"),
                             ("Pokemon premium collection", "Premium Collection"),
@@ -76,6 +80,38 @@ def test_classification_and_canonical_fixture():
         assert discovery.classify(title) == expected
     with pytest.raises(ValueError):
         discovery.canonical("Target", "https://target.com.evil.test/p/x/-/A-12345")
+
+
+def test_ambiguous_price_is_not_purchase_ready(factory):
+    assert adapters.price_value("$49.99") == "$49.99"
+    assert adapters.price_value("$49.99 - $79.99") is None
+    assert adapters.price_value("From $49.99") is None
+    assert adapters.price_value("Save $10, now $49.99") is None
+    with factory() as db:
+        item, rule = product(db), add_rule(db, mode="AUTO")
+        service.apply_result(db, item, adapters.Result(
+            "IN_STOCK", name="Pokemon Scarlet Elite Trainer Box",
+            price=adapters.price_value("$49.99 - $79.99"), seller="Target"))
+        assert not purchase.rule_matches(rule, item)[0]
+
+
+def test_structured_offer_preserves_seller_and_rejects_multiple_offers():
+    def page(offers):
+        return ('<html><body><h1>Pokemon Scarlet Elite Trainer Box</h1>'
+                '<script type="application/ld+json">'
+                '{"@type":"Product","name":"Pokemon Scarlet Elite Trainer Box",'
+                f'"offers":{offers}'
+                '}'
+                '</script></body></html>')
+
+    offer = ('{"availability":"https://schema.org/InStock","price":"49.99",'
+             '"seller":{"name":"Target"}}')
+    result = adapters.ADAPTERS["Target"].parse(page(offer))
+    assert (result.status, result.price, result.seller) == ("IN_STOCK", "$49.99", "Target")
+    result = adapters.ADAPTERS["Target"].parse(page(f"[{offer},{offer}]"))
+    assert result.status == "UNKNOWN"
+    assert result.price is None
+    assert result.seller is None
 
 
 def test_silent_baseline_new_discovery_dedupe_and_auto_enroll(factory):
@@ -106,6 +142,11 @@ def test_unparseable_scan_keeps_baseline(factory):
         db.commit()
         with pytest.raises(ValueError):
             discovery.scan(db, source, [])
+        assert not source.baseline_complete
+        invalid = discovery.Listing("Target", "wrong-id", "https://www.target.com/p/x/-/A-12345",
+                                    "Pokemon ETB", "ETB", "$49.99", "IN_STOCK", "Target")
+        with pytest.raises(ValueError):
+            discovery.scan(db, source, [invalid])
         assert not source.baseline_complete
 
 

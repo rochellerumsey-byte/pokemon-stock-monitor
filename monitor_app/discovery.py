@@ -13,7 +13,24 @@ from sqlalchemy import select
 from .adapters import belongs, hostname, price_value, public_host
 from .db import DiscoveredProduct, DiscoverySource, Product, utcnow
 
-SOURCE_DOMAINS = {"Target": "target.com", "Best Buy": "bestbuy.com"}
+@dataclass(frozen=True)
+class DiscoveryAdapter:
+    domain: str
+    identity_pattern: str
+    card_selector: str
+    title_selector: str = "h2, h3, [data-test='product-title'], .sku-title"
+    price_selector: str = "[data-test='current-price'], [data-testid='price'], .priceView-customer-price"
+    seller_selector: str = "[data-test='seller'], [data-testid='seller'], .seller"
+
+
+# Additional retailers add an adapter entry after their public listing cards and IDs are verified.
+DISCOVERY_ADAPTERS = {
+    "Target": DiscoveryAdapter("target.com", r"/A-(\d+)(?:/|$)",
+                               '[data-test="product-card"], [data-test="productCard"], '
+                               '[data-test="product-grid"] article'),
+    "Best Buy": DiscoveryAdapter("bestbuy.com", r"^/(?:site|product)/.+/(\d+)(?:\.p)?(?:/|$)",
+                                 '[data-testid="product-card"], .sku-item, article.product-card'),
+}
 TYPE_PATTERNS = (
     ("Pokemon Center ETB", r"pok[eé]mon center.*elite trainer box|elite trainer box.*pok[eé]mon center"),
     ("ETB", r"elite trainer box|\betb\b"),
@@ -56,10 +73,10 @@ def classify(title):
 def canonical(retailer, url):
     parts = urlsplit(url)
     host = hostname(url)
-    if retailer not in SOURCE_DOMAINS or not belongs(host, SOURCE_DOMAINS[retailer]):
+    adapter = DISCOVERY_ADAPTERS.get(retailer)
+    if not adapter or not belongs(host, adapter.domain):
         raise ValueError("Listing URL is outside the source retailer")
-    match = (re.search(r"/A-(\d+)(?:/|$)", parts.path, re.I) if retailer == "Target"
-             else re.search(r"/(\d+)\.p(?:/|$)", parts.path, re.I))
+    match = re.search(adapter.identity_pattern, parts.path, re.I)
     if not match:
         raise ValueError("Listing has no stable retailer product ID")
     clean = urlunsplit(("https", host, parts.path.rstrip("/"), "", ""))
@@ -67,21 +84,23 @@ def canonical(retailer, url):
 
 
 def validate_source(retailer, url):
-    if retailer not in SOURCE_DOMAINS:
+    adapter = DISCOVERY_ADAPTERS.get(retailer)
+    if not adapter:
         raise ValueError("Discovery currently supports Target and Best Buy only")
     host = hostname(url)
-    if not belongs(host, SOURCE_DOMAINS[retailer]) or not public_host(host):
+    if not belongs(host, adapter.domain) or not public_host(host):
         raise ValueError("Source must be a public URL on the selected retailer")
     return url
 
 
 def parse_listings(retailer, source_url, html):
+    adapter = DISCOVERY_ADAPTERS.get(retailer)
+    if not adapter:
+        raise ValueError("Discovery adapter is not configured for this retailer")
     soup = BeautifulSoup(html, "html.parser")
     listings = {}
     # Product cards are required so a site's navigation and recommendations are not inventory.
-    selectors = ('[data-test="product-card"], [data-test="productCard"], [data-test="product-grid"] article'
-                 if retailer == "Target" else '[data-testid="product-card"], .sku-item, article.product-card')
-    for card in soup.select(selectors):
+    for card in soup.select(adapter.card_selector):
         anchor = card.select_one("a[href]")
         if not anchor:
             continue
@@ -89,13 +108,13 @@ def parse_listings(retailer, source_url, html):
             product_id, url = canonical(retailer, urljoin(source_url, anchor["href"]))
         except ValueError:
             continue
-        title_node = card.select_one("h2, h3, [data-test='product-title'], .sku-title")
+        title_node = card.select_one(adapter.title_selector)
         title = (title_node or anchor).get_text(" ", strip=True)[:200]
         if not title:
             continue
-        price_node = card.select_one("[data-test='current-price'], [data-testid='price'], .priceView-customer-price")
+        price_node = card.select_one(adapter.price_selector)
         price = price_value(price_node.get_text(" ", strip=True)) if price_node else None
-        seller_node = card.select_one("[data-test='seller'], [data-testid='seller'], .seller")
+        seller_node = card.select_one(adapter.seller_selector)
         seller = seller_node.get_text(" ", strip=True)[:200] if seller_node else None
         status_text = card.get_text(" ", strip=True).lower()
         status = ("OUT_OF_STOCK" if "sold out" in status_text or "out of stock" in status_text
@@ -126,6 +145,7 @@ def scan(db, source, listings, notify=None):
         raise ValueError("No product cards found; scan was not accepted as a baseline")
     baseline = not source.baseline_complete
     created = []
+    accepted = 0
     for listing in listings:
         if listing.retailer != source.retailer:
             continue
@@ -135,12 +155,16 @@ def scan(db, source, listings, notify=None):
             continue
         if product_id != listing.retailer_product_id:
             continue
+        accepted += 1
         seen = db.scalar(select(DiscoveredProduct).where(
             DiscoveredProduct.retailer == source.retailer,
             DiscoveredProduct.retailer_product_id == product_id))
         if seen:
             seen.last_seen_at = now
+            seen.url, seen.title, seen.product_type = url, listing.title[:200], listing.product_type
             seen.price, seen.status, seen.seller = listing.price, listing.status, listing.seller
+            seen.release_date = listing.release_date
+            seen.metadata_json = json.dumps(listing.metadata or {})
             continue
         seen = DiscoveredProduct(source_id=source.id, retailer=source.retailer,
                                  retailer_product_id=product_id, url=url, title=listing.title[:200],
@@ -160,6 +184,8 @@ def scan(db, source, listings, notify=None):
             seen.product_id = product.id
         if not baseline:
             created.append(seen)
+    if not accepted:
+        raise ValueError("No valid retailer product IDs found; scan was not accepted as a baseline")
     source.baseline_complete = True
     source.last_scanned_at = now
     interval = max(300, int(os.getenv("DISCOVERY_INTERVAL_SECONDS", "1800")))
