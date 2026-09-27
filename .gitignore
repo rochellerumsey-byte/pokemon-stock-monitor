@@ -1,6 +1,12 @@
 # Logs and data
 stock_log.txt
 restock_history.json
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite*
+.pytest_cache/
 
 # Python cache
 __pycache__/
@@ -11,6 +17,7 @@ __pycache__/
 venv/
 env/
 ENV/
+.venv/
 
 # IDE
 .vscode/
