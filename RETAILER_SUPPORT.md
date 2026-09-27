@@ -1,0 +1,13 @@
+# Retailer support and validation
+
+Validation date: 2026-09-27. Status labels describe this runtime's live validation, not the existence of adapter code. The five adapter fixture tests passed, but no retailer was confirmed end to end for live stock monitoring here. Run checks from the deployed Railway environment before relying on alerts.
+
+| Retailer | Validation | Direct public page check | Current limitation |
+| --- | --- | --- | --- |
+| Target | PARTIALLY VERIFIED | [Scarlet & Violet Booster Bundle](https://www.target.com/p/-/A-88275197) returned HTTP 200, a product title, and a disabled Add to cart button. No product JSON-LD availability was present. | The conservative adapter reports `UNKNOWN` rather than inferring stock solely from a disabled button. Need an unambiguous live in-stock and out-of-stock signal. |
+| Best Buy | UNVERIFIED | [Prismatic Evolutions Booster Bundle](https://www.bestbuy.com/product/pokemon-trading-card-game-scarlet-violet-prismatic-evolutions-booster-bundle/6608206) failed with a connection error from this runtime. | Fixture parser works; live availability and price were not established. |
+| Pokémon Center | BLOCKED/UNSUPPORTED in this runtime | [Cyrus Premium Tournament Collection](https://www.pokemoncenter.com/product/699-85363/) returned HTTP 403. | No bypass is implemented. Monitor reports `ERROR`. |
+| GameStop | BLOCKED/UNSUPPORTED in this runtime | [Mega Evolution Booster Box](https://www.gamestop.com/toys-games/trading-cards/products/pokemon-trading-card-game-mega-evolution-booster-box/20027793.html) returned HTTP 403. | No bypass is implemented. Monitor reports `ERROR`. |
+| Amazon | BLOCKED/UNSUPPORTED | Public product pages are not treated as a reliable monitoring source. | Adapter always reports `UNAVAILABLE`; it does not evade access controls. |
+
+The tests use sanitized local HTML examples; they do not prove the current live sites expose those signals. An `UNKNOWN`, `ERROR`, or `UNAVAILABLE` observation never triggers a restock notification. A retailer should be called VERIFIED only after a current live public product page yields a correct stock and price result and the same behavior is confirmed on both sides of a stock transition.
