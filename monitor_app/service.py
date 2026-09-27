@@ -164,6 +164,8 @@ def apply_result(db, product, result: Result, now=None, send=None):
         product.last_successful_check = now
         from .discovery import classify
         product.observed_title = result.name[:200] if isinstance(result.name, str) and result.name else None
+        product.release_date = result.release_date
+        product.image_url = result.image_url
         product.product_type = classify(product.observed_title) if product.observed_title else None
         if result.price:
             product.price = result.price

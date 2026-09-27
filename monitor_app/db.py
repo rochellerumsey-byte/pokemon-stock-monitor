@@ -41,6 +41,8 @@ class Product(Base):
     retailer_product_id: Mapped[str | None] = mapped_column(String(100))
     product_type: Mapped[str | None] = mapped_column(String(50))
     observed_title: Mapped[str | None] = mapped_column(String(200))
+    release_date: Mapped[str | None] = mapped_column(String(40))
+    image_url: Mapped[str | None] = mapped_column(Text)
     last_checked: Mapped[datetime | None] = mapped_column(DateTime)
     last_successful_check: Mapped[datetime | None] = mapped_column(DateTime)
     last_status_change: Mapped[datetime | None] = mapped_column(DateTime)

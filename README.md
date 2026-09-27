@@ -4,7 +4,9 @@ A private web dashboard that checks public Pokémon TCG product pages, attempts 
 
 ## Retailers
 
-Target, Best Buy, Pokémon Center, and GameStop have conservative public-page adapters. Amazon is present but reports `UNAVAILABLE` because reliable public monitoring has not been established. Simple additional sites can be configured in the dashboard. See [RETAILER_SUPPORT.md](RETAILER_SUPPORT.md) for actual validation, which is distinct from fixture tests.
+Target, Pokémon Center, and GameStop have conservative public-page adapters. Best Buy uses a Products API adapter. Amazon is present but reports `UNAVAILABLE` because reliable public monitoring has not been established. Simple additional sites can be configured in the dashboard. See [RETAILER_SUPPORT.md](RETAILER_SUPPORT.md) for actual validation, which is distinct from fixture tests.
+
+Best Buy discovery and known-SKU checks now use its documented Products API when `BEST_BUY_API_KEY` is configured. Public HTML is not a fallback. The API path is fixture tested and still needs a real key and Railway validation. See [BEST_BUY_API.md](BEST_BUY_API.md) for access, rate limits, supported fields and the seller/preorder limits.
 
 ## How it works
 

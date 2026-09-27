@@ -4,7 +4,7 @@ import os
 import time
 from datetime import timedelta
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, or_, select, text
 
 from .adapters import Result, fetch
 from .db import (AlertHistory, DiscoveredProduct, DiscoverySource, Product, PurchaseAttempt, PurchaseCandidate,
@@ -15,6 +15,32 @@ from . import discovery, purchase
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format='{"time":"%(asctime)s","level":"%(levelname)s","message":"%(message)s"}')
 log = logging.getLogger(__name__)
 LOCK_ID = 706041321
+
+
+def expire_bestbuy_content(db, now):
+    """Best Buy API terms allow only temporary caching of product content."""
+    cutoff = now - timedelta(hours=71)  # Leave margin for the worker cycle.
+    stale = db.scalars(select(DiscoveredProduct).where(
+        DiscoveredProduct.retailer == "Best Buy", DiscoveredProduct.last_seen_at < cutoff)).all()
+    for item in stale:
+        item.title = "Best Buy product data expired"
+        item.product_type = item.price = item.seller = item.release_date = item.metadata_json = None
+        item.status = "UNKNOWN"
+    stale_products = db.scalars(select(Product).where(
+        Product.retailer == "Best Buy",
+        or_(Product.last_checked < cutoff,
+            Product.last_checked.is_(None) & (Product.created_at < cutoff)))).all()
+    for product in stale_products:
+        if db.scalar(select(DiscoveredProduct.id).where(DiscoveredProduct.product_id == product.id)):
+            product.name = f"Best Buy SKU {product.retailer_product_id}"
+        product.observed_title = product.price = product.seller = product.product_type = None
+        product.release_date = product.image_url = None
+        product.price_confirmed = False
+        product.status = "UNKNOWN"
+        product.last_known_status = None
+    db.execute(delete(StatusHistory).where(
+        StatusHistory.checked_at < cutoff,
+        StatusHistory.product_id.in_(select(Product.id).where(Product.retailer == "Best Buy"))))
 
 
 def cycle(factory):
@@ -144,6 +170,7 @@ def cycle(factory):
         state.last_cycle_at = state.heartbeat_at
         days = max(7, int(os.getenv("HISTORY_RETENTION_DAYS", "90")))
         cutoff = utcnow() - timedelta(days=days)
+        expire_bestbuy_content(db, utcnow())
         db.execute(delete(AlertHistory).where(AlertHistory.attempted_at < cutoff))
         db.execute(delete(StatusHistory).where(StatusHistory.checked_at < cutoff))
         db.commit()

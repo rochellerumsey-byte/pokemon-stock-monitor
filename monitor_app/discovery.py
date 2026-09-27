@@ -28,7 +28,7 @@ DISCOVERY_ADAPTERS = {
     "Target": DiscoveryAdapter("target.com", r"/A-(\d+)(?:/|$)",
                                '[data-test="product-card"], [data-test="productCard"], '
                                '[data-test="product-grid"] article'),
-    "Best Buy": DiscoveryAdapter("bestbuy.com", r"^/(?:site|product)/.+/(\d+)(?:\.p)?(?:/|$)",
+    "Best Buy": DiscoveryAdapter("bestbuy.com", r"^/(?:site/(?:.+/)?|product/.+/)(\d+)(?:\.p)?(?:/|$)",
                                  '[data-testid="product-card"], .sku-item, article.product-card'),
 }
 TYPE_PATTERNS = (
@@ -90,6 +90,9 @@ def validate_source(retailer, url):
     host = hostname(url)
     if not belongs(host, adapter.domain) or not public_host(host):
         raise ValueError("Source must be a public URL on the selected retailer")
+    if retailer == "Best Buy":
+        from .bestbuy_api import source_filter
+        source_filter(url)
     return url
 
 
@@ -128,6 +131,18 @@ def parse_listings(retailer, source_url, html):
 
 def fetch_source(source, session=None):
     validate_source(source.retailer, source.url)
+    if source.retailer == "Best Buy":
+        from .bestbuy_api import BestBuyAPI, normalized
+        products = BestBuyAPI(session=session).discover(source.url)
+        listings = []
+        for product in products:
+            item = normalized(product) if isinstance(product, dict) else None
+            if item:
+                kind = classify(item["title"]) if item["sealed_eligible"] else None
+                listings.append(Listing("Best Buy", item["sku"], item["url"], item["title"],
+                                        kind, item["price"], item["status"], None,
+                                        item["release_date"], {"image": item["image"]} if item["image"] else {}))
+        return listings
     client = session or requests.Session()
     response = client.get(source.url, headers={"User-Agent": "PokemonStockMonitor/2.0 (personal inventory notifications)",
                                                "Accept": "text/html"}, timeout=(5, 15), allow_redirects=False)
@@ -184,7 +199,9 @@ def scan(db, source, listings, notify=None):
             if product is None:
                 product = Product(name=listing.title[:200], url=url, retailer=source.retailer,
                                   retailer_product_id=product_id, product_type=listing.product_type,
-                                  seller=listing.seller, price=listing.price, next_check_at=now)
+                                  seller=listing.seller, price=listing.price, next_check_at=now,
+                                  release_date=listing.release_date,
+                                  image_url=(listing.metadata or {}).get("image"))
                 db.add(product)
                 db.flush()
             seen.product_id = product.id

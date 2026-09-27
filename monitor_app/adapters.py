@@ -29,6 +29,8 @@ class Result:
     error: str | None = None
     retry_after: int | None = None
     seller: str | None = None
+    release_date: str | None = None
+    image_url: str | None = None
 
 
 def hostname(url):
@@ -226,6 +228,19 @@ def fetch(url, adapter, session=None):
     host = hostname(url)
     if not public_host(host):
         return Result("ERROR", error="Product host does not resolve to a public address")
+    if isinstance(adapter, BestBuy):
+        from .bestbuy_api import BestBuyAPI, normalized, sku_from_url
+        sku = sku_from_url(url)
+        if not sku:
+            return Result("UNKNOWN", error="Best Buy product URL has no numeric SKU for the Products API")
+        try:
+            item = normalized(BestBuyAPI(session=session).product(sku))
+        except ValueError as exc:
+            return Result("UNKNOWN", error=str(exc))
+        if not item or item["sku"] != sku:
+            return Result("UNKNOWN", error="Best Buy API did not confirm this product SKU")
+        return Result(item["status"], item["title"], item["price"], seller=None,
+                      release_date=item["release_date"], image_url=item["image"])
     if isinstance(adapter, Amazon):
         return Result("UNAVAILABLE", error="Amazon public pages are unsupported for reliable monitoring")
     session = session or requests.Session()

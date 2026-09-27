@@ -18,6 +18,10 @@ Phase 2 cannot place live purchases. For sandbox validation, obtain a Zinc **tes
 
 Real retailer discovery, Zinc sandbox delivery, Discord delivery, and PostgreSQL operation still require deployment validation. Fixture tests and CI do not establish them.
 
+## Optional Best Buy Products API
+
+Best Buy discovery and numeric-SKU monitoring require `BEST_BUY_API_KEY` in Railway Variables. Obtain it through the [Best Buy Developer Portal](https://developer.bestbuy.com/) and review [BEST_BUY_API.md](BEST_BUY_API.md), including the API content-retention terms, before configuring it. No key is included in CI. Without a key, Best Buy checks remain `UNKNOWN` and source scans keep their baseline pending. An API success in CI is mocked; verify a full scan and known product from Railway after configuring the key. Seller remains unknown and purchase rules stay blocked for Best Buy.
+
 The startup script validates required settings, runs `alembic upgrade head`, starts one polling process, and runs Gunicorn on Railway's `PORT`. It stops the container if either process exits unexpectedly so Railway can restart it. PostgreSQL advisory locking prevents duplicate polling during restarts. Railway's health check gates deployment; Railway does not poll it continuously afterward, so the dashboard and logs remain important.
 
 The web service must use PostgreSQL. A SQLite URL is for local development with the separate commands in the README, not `start.sh`. Enable database backups before handoff. A database connection failure at startup may need a redeploy after PostgreSQL becomes available.
