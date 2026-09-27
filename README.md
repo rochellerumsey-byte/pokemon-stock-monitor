@@ -1,6 +1,6 @@
 # Pokémon Stock Monitor
 
-A private web dashboard that checks public Pokémon TCG product pages, discovers listings on configured Target and Best Buy source pages, and sends Discord notifications. Phase 2 includes rule evaluation, owner approval, and Zinc **test-mode-only** order integration. Live purchasing is unavailable. It does not bypass retailer controls.
+A private web dashboard that checks public Pokémon TCG product pages, attempts listing discovery on configured Target and Best Buy source pages, and sends Discord notifications. Phase 2 includes rule evaluation, owner approval, and Zinc **test-mode-only** order integration. Live purchasing is unavailable. It does not bypass retailer controls. Current Target public pages do not provide the inventory, price, and availability signals this app needs; see [RETAILER_SUPPORT.md](RETAILER_SUPPORT.md) before relying on Target monitoring.
 
 ## Retailers
 

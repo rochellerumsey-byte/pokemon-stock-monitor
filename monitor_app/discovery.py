@@ -135,7 +135,13 @@ def fetch_source(source, session=None):
         raise ValueError(f"Source returned HTTP {response.status_code} or non-HTML content")
     if len(response.content) > 2_000_000:
         raise ValueError("Source page exceeds size limit")
-    return parse_listings(source.retailer, source.url, response.text)
+    listings = parse_listings(source.retailer, source.url, response.text)
+    if source.retailer == "Target" and not listings:
+        soup = BeautifulSoup(response.text, "html.parser")
+        if soup.select_one("#__NEXT_DATA__"):
+            raise ValueError("Target returned a client-loaded listing shell without product inventory; "
+                             "the silent baseline remains pending")
+    return listings
 
 
 def scan(db, source, listings, notify=None):

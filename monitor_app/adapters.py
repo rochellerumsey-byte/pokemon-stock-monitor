@@ -161,6 +161,14 @@ class Target(Adapter):
     name = "Target"
     selector = 'main button, [data-test="shipItButton"], [data-test="addToCartButton"]'
 
+    def parse(self, html):
+        soup = BeautifulSoup(html, "html.parser")
+        if soup.select_one('[data-test="price-module-placeholder"]') and structured(soup) is None:
+            title = soup.select_one("h1")
+            return Result("UNKNOWN", title.get_text(" ", strip=True) if title else None,
+                          error="Target provided loading placeholders, not confirmed price and stock data")
+        return super().parse(html)
+
 
 class BestBuy(Adapter):
     name = "Best Buy"

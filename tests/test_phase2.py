@@ -13,7 +13,7 @@ from monitor_app.db import (AlertHistory, Base, DiscoveredProduct, DiscoverySour
 from monitor_app.web import create_app
 
 FIXTURES = Path(__file__).parent / "fixtures"
-TARGET_URL = "https://www.target.com/c/pokemon-cards"
+TARGET_URL = "https://www.target.com/c/pokemon-trading-cards-card-games-toys/-/N-6llsh"
 TEST_ENV = {"ZINC_API_KEY": "zn_test_example",
             **{f"ZINC_SHIPPING_{key}": "test" for key in purchase.ADDRESS_FIELDS}}
 
@@ -148,6 +148,34 @@ def test_unparseable_scan_keeps_baseline(factory):
         with pytest.raises(ValueError):
             discovery.scan(db, source, [invalid])
         assert not source.baseline_complete
+
+
+def test_current_target_listing_shell_cannot_establish_baseline(factory, monkeypatch):
+    html = (FIXTURES / "target-live-listing-shell.html").read_text(encoding="utf-8")
+    assert discovery.parse_listings("Target", TARGET_URL, html) == []
+    monkeypatch.setattr(discovery, "public_host", lambda _: True)
+
+    class Session:
+        def get(self, *_args, **_kwargs):
+            return SimpleNamespace(status_code=200, headers={"Content-Type": "text/html"},
+                                   content=html.encode(), text=html)
+
+    with factory() as db:
+        source = DiscoverySource(retailer="Target", url=TARGET_URL)
+        db.add(source)
+        db.commit()
+        with pytest.raises(ValueError, match="client-loaded listing shell"):
+            discovery.fetch_source(source, Session())
+        assert not source.baseline_complete
+        assert db.scalar(select(func.count()).select_from(DiscoveredProduct)) == 0
+
+
+def test_current_target_product_placeholder_is_unknown():
+    html = (FIXTURES / "target-live-product-placeholder.html").read_text(encoding="utf-8")
+    result = adapters.ADAPTERS["Target"].parse(html)
+    assert result.status == "UNKNOWN"
+    assert result.price is None and result.seller is None
+    assert "loading placeholders" in result.error
 
 
 def test_rule_fail_closed_and_caps(factory):
