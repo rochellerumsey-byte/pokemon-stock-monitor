@@ -15,7 +15,8 @@ def create_app(database_url=None, testing=False):
     app = Flask(__name__)
     secret = os.getenv("SECRET_KEY", "")
     password = os.getenv("ADMIN_PASSWORD", "")
-    if not testing and (len(secret) < 32 or len(password) < 16):
+    if not testing and (len(secret) < 32 or len(password) < 16 or
+                        "replace-with" in secret or "replace-with" in password):
         raise RuntimeError("Set SECRET_KEY (32+ characters) and ADMIN_PASSWORD (16+ characters)")
     app.secret_key = secret or "test-only-secret"
     app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax",

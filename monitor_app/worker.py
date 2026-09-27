@@ -1,5 +1,4 @@
 """Single polling worker. PostgreSQL advisory lock prevents duplicate workers."""
-import json
 import logging
 import os
 import time
