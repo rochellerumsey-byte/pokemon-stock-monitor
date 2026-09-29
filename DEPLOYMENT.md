@@ -16,7 +16,7 @@ The deployed app uses one Railway web service and one PostgreSQL service. It doe
 
 Phase 2 cannot place live purchases. For sandbox validation, obtain a Zinc **test-mode** API key starting `zn_test_`, then set `ZINC_API_KEY` and the `ZINC_SHIPPING_*` variables listed in `.env.example` in Railway Variables. Do not commit the key or an address. The address goes directly to Zinc on test-mode submission and is not stored in the application's tables. A live `zn_live_` key fails startup validation and is rejected by the provider. In the dashboard, create a disabled rule, review and enable it, then use **Enable sandbox submissions**. This switch defaults OFF and has an emergency OFF button. Use a Zinc rehearsal product and verify the sandbox order record, status reconciliation, and Discord attempts before trusting the flow. Zinc's [current order API](https://github.com/zincio/skills/blob/master/skills/universal-checkout/SKILL.md) specifies the idempotency key and total `max_price`; [Zinc describes test mode](https://www.zinc.com/) as isolated and non-purchasing.
 
-Real retailer discovery, Zinc sandbox delivery, Discord delivery, and PostgreSQL operation still require deployment validation. Fixture tests and CI do not establish them.
+Safari Zone discovery and known-product stock checks returned real product data locally on 2026-09-28. The migration adds its Pokémon sealed-product source with a pending silent baseline; no new variable is required. Check its first Railway scan and a product check before calling production validated. Zinc sandbox delivery, Discord delivery, and PostgreSQL operation still require deployment validation. Fixture tests and CI do not establish them.
 
 ## Optional Best Buy Products API
 

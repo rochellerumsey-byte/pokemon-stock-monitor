@@ -30,6 +30,7 @@ DISCOVERY_ADAPTERS = {
                                '[data-test="product-grid"] article'),
     "Best Buy": DiscoveryAdapter("bestbuy.com", r"^/(?:site/(?:.+/)?|product/.+/)(\d+)(?:\.p)?(?:/|$)",
                                  '[data-testid="product-card"], .sku-item, article.product-card'),
+    "Safari Zone Collectibles": DiscoveryAdapter("safari-zone.com", r"^/products/([a-z0-9-]+)/?$", ""),
 }
 TYPE_PATTERNS = (
     ("Pokemon Center ETB", r"pok[eé]mon center.*elite trainer box|elite trainer box.*pok[eé]mon center"),
@@ -62,7 +63,11 @@ class Listing:
 
 
 def classify(title):
-    if not re.search(r"pok[eé]mon", title, re.I) or EXCLUDED.search(title):
+    if not re.search(r"pok[eé]mon", title, re.I):
+        return None
+    excluded = EXCLUDED.search(title)
+    if excluded and not (excluded.group().lower() == "figure" and
+                         re.search(r"\btcg\b.*\bcollection\b", title, re.I)):
         return None
     for kind, pattern in TYPE_PATTERNS:
         if re.search(pattern, title, re.I):
@@ -70,12 +75,18 @@ def classify(title):
     return None
 
 
-def canonical(retailer, url):
+def canonical(retailer, url, retailer_product_id=None):
     parts = urlsplit(url)
     host = hostname(url)
     adapter = DISCOVERY_ADAPTERS.get(retailer)
     if not adapter or not belongs(host, adapter.domain):
         raise ValueError("Listing URL is outside the source retailer")
+    if retailer == "Safari Zone Collectibles":
+        from .safari_zone import product_identity
+        handle = product_identity(url)
+        if not retailer_product_id or not str(retailer_product_id).isdigit():
+            raise ValueError("Safari Zone listing has no stable numeric product ID")
+        return str(retailer_product_id), f"https://safari-zone.com/products/{handle}"
     match = re.search(adapter.identity_pattern, parts.path, re.I)
     if not match:
         raise ValueError("Listing has no stable retailer product ID")
@@ -86,7 +97,14 @@ def canonical(retailer, url):
 def validate_source(retailer, url):
     adapter = DISCOVERY_ADAPTERS.get(retailer)
     if not adapter:
-        raise ValueError("Discovery currently supports Target and Best Buy only")
+        raise ValueError("Discovery currently supports Target, Best Buy, and Safari Zone Collectibles only")
+    if retailer == "Safari Zone Collectibles":
+        from .safari_zone import COLLECTION_URL
+        if url.rstrip("/") != COLLECTION_URL:
+            raise ValueError("Use the Safari Zone Pokémon sealed-product collection URL")
+        if not public_host("safari-zone.com"):
+            raise ValueError("Safari Zone host does not resolve to a public address")
+        return COLLECTION_URL
     host = hostname(url)
     if not belongs(host, adapter.domain) or not public_host(host):
         raise ValueError("Source must be a public URL on the selected retailer")
@@ -131,6 +149,9 @@ def parse_listings(retailer, source_url, html):
 
 def fetch_source(source, session=None):
     validate_source(source.retailer, source.url)
+    if source.retailer == "Safari Zone Collectibles":
+        from .safari_zone import discover
+        return discover(session=session)
     if source.retailer == "Best Buy":
         from .bestbuy_api import BestBuyAPI, normalized
         products = BestBuyAPI(session=session).discover(source.url)
@@ -171,7 +192,7 @@ def scan(db, source, listings, notify=None):
         if listing.retailer != source.retailer:
             continue
         try:
-            product_id, url = canonical(source.retailer, listing.url)
+            product_id, url = canonical(source.retailer, listing.url, listing.retailer_product_id)
         except ValueError:
             continue
         if product_id != listing.retailer_product_id:

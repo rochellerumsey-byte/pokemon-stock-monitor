@@ -151,6 +151,12 @@ def send_event(db, kind, product, message, post=None):
 
 def apply_result(db, product, result: Result, now=None, send=None):
     now = now or utcnow()
+    if product.retailer == "Safari Zone Collectibles" and result.status not in ("ERROR", "UNKNOWN"):
+        if not result.retailer_product_id or (product.retailer_product_id and
+                                               result.retailer_product_id != product.retailer_product_id):
+            result = Result("UNKNOWN", error="Safari Zone product identity changed or could not be confirmed")
+        elif not product.retailer_product_id:
+            product.retailer_product_id = result.retailer_product_id
     old = product.last_known_status
     product.last_checked = now
     product.status = result.status

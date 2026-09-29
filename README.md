@@ -1,12 +1,12 @@
 # Pokémon Stock Monitor
 
-A private web dashboard that checks public Pokémon TCG product pages, attempts listing discovery on configured Target and Best Buy source pages, and sends Discord notifications. Phase 2 includes rule evaluation, owner approval, and Zinc **test-mode-only** order integration. Live purchasing is unavailable. It does not bypass retailer controls. Current Target public pages do not provide the inventory, price, and availability signals this app needs; see [RETAILER_SUPPORT.md](RETAILER_SUPPORT.md) before relying on Target monitoring.
+A private web dashboard that checks public Pokémon TCG product pages, discovers products from Safari Zone Collectibles' published read-only collection feed, and sends Discord notifications. Phase 2 includes rule evaluation, owner approval, and Zinc **test-mode-only** order integration. Live purchasing is unavailable. It does not bypass retailer controls. See [RETAILER_SUPPORT.md](RETAILER_SUPPORT.md) for retailer-specific validation.
 
 ## Retailers
 
-Target, Pokémon Center, and GameStop have conservative public-page adapters. Best Buy uses a Products API adapter. Amazon is present but reports `UNAVAILABLE` because reliable public monitoring has not been established. Simple additional sites can be configured in the dashboard. See [RETAILER_SUPPORT.md](RETAILER_SUPPORT.md) for actual validation, which is distinct from fixture tests.
+Target, Pokémon Center, and GameStop have conservative public-page adapters. Best Buy uses a Products API adapter. Safari Zone uses its public Shopify collection JSON for discovery and product-page structured offers for stock checks. Amazon is present but reports `UNAVAILABLE` because reliable public monitoring has not been established. Simple additional sites can be configured in the dashboard. See [RETAILER_SUPPORT.md](RETAILER_SUPPORT.md) for actual validation, which is distinct from fixture tests.
 
-Best Buy discovery and known-SKU checks now use its documented Products API when `BEST_BUY_API_KEY` is configured. Public HTML is not a fallback. The API path is fixture tested and still needs a real key and Railway validation. See [BEST_BUY_API.md](BEST_BUY_API.md) for access, rate limits, supported fields and the seller/preorder limits.
+Best Buy discovery and known-SKU checks use its documented Products API when `BEST_BUY_API_KEY` is configured. Public HTML is not a fallback. The API path is fixture tested and still needs a real key and Railway validation. Safari Zone needs no key; its first deployed scan will silently baseline the Pokémon sealed-product collection. See [BEST_BUY_API.md](BEST_BUY_API.md) for Best Buy access details.
 
 ## How it works
 
@@ -24,7 +24,7 @@ The legacy `watchlist.txt` is no longer used by production. If it contains real 
 
 ## Phase 2 boundaries
 
-- Discovery uses conservative product-card parsing and stable retailer product IDs. Target and Best Buy discovery is **fixture tested only**; live source pages can change or block requests.
+- Discovery uses conservative product identities. Safari Zone's live collection returned three real Pokémon TCG products locally on 2026-09-28; deployment remains unverified. Target and Best Buy discovery is **fixture tested only**; live source pages can change or block requests.
 - Rules can monitor, request approval, or submit **sandbox** orders. Missing price, seller, identity, or confirmed stock blocks the order path. The dashboard approval action rechecks the product page and rules immediately before submission.
 - Zinc requests use a `zn_test_` key, an idempotency key, and a hard total `max_price`. A timed-out submission is marked unknown and never blindly resubmitted. Confirm it in Zinc before any intervention.
 - The dashboard never asks for card data or retailer passwords. No live order path exists in this phase.

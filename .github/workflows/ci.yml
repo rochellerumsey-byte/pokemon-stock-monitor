@@ -46,6 +46,18 @@ jobs:
           python -m alembic upgrade head
           python -m alembic current
           python -m alembic check
+      - name: Keep CI independent of live retailer access
+        run: |
+          python - <<'PY'
+          from sqlalchemy import update
+          from monitor_app.db import DiscoverySource, make_engine, session_factory
+          engine = make_engine()
+          with session_factory(engine)() as db:
+              db.execute(update(DiscoverySource).where(
+                  DiscoverySource.retailer == "Safari Zone Collectibles").values(enabled=False))
+              db.commit()
+          engine.dispose()
+          PY
       - name: Build production image
         run: docker build -t pokemon-stock-monitor-ci .
       - name: Start container and check health

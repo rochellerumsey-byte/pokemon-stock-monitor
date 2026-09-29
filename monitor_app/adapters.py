@@ -17,6 +17,7 @@ BUILTINS = {
     "Best Buy": ("bestbuy.com",),
     "Pokemon Center": ("pokemoncenter.com",),
     "GameStop": ("gamestop.com",),
+    "Safari Zone Collectibles": ("safari-zone.com",),
     "Amazon": ("amazon.com",),
 }
 
@@ -31,6 +32,7 @@ class Result:
     seller: str | None = None
     release_date: str | None = None
     image_url: str | None = None
+    retailer_product_id: str | None = None
 
 
 def hostname(url):
@@ -187,6 +189,14 @@ class GameStop(Adapter):
     selector = 'main button, button.add-to-cart, [data-testid="add-to-cart"]'
 
 
+class SafariZone(Adapter):
+    name = "Safari Zone Collectibles"
+
+    def parse(self, html, expected_url=None):
+        from .safari_zone import parse_product
+        return parse_product(html, expected_url)
+
+
 class Amazon(Adapter):
     name = "Amazon"
 
@@ -221,7 +231,7 @@ class Generic(Adapter):
                       None if status != "UNKNOWN" else "Generic indicators ambiguous; custom adapter may be required")
 
 
-ADAPTERS = {x.name: x() for x in (Target, BestBuy, PokemonCenter, GameStop, Amazon)}
+ADAPTERS = {x.name: x() for x in (Target, BestBuy, PokemonCenter, GameStop, SafariZone, Amazon)}
 
 
 def fetch(url, adapter, session=None):
@@ -269,6 +279,8 @@ def fetch(url, adapter, session=None):
                                              for x in ("captcha", "access denied", "verify you are human"))
         ):
             return Result("UNKNOWN", error="Retailer challenge or access restriction")
+        if isinstance(adapter, SafariZone):
+            return adapter.parse(response.text, expected_url=url)
         return adapter.parse(response.text)
     except requests.RequestException as exc:
         return Result("ERROR", error=type(exc).__name__)
