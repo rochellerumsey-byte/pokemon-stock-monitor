@@ -1,0 +1,242 @@
+"""Conservative public listing discovery. A missing product identity is never guessed."""
+import json
+import os
+import re
+from dataclasses import dataclass
+from datetime import timedelta
+from urllib.parse import urljoin, urlsplit, urlunsplit
+
+import requests
+from bs4 import BeautifulSoup
+from sqlalchemy import select
+
+from .adapters import belongs, hostname, price_value, public_host
+from .db import DiscoveredProduct, DiscoverySource, Product, utcnow
+
+@dataclass(frozen=True)
+class DiscoveryAdapter:
+    domain: str
+    identity_pattern: str
+    card_selector: str
+    title_selector: str = "h2, h3, [data-test='product-title'], .sku-title"
+    price_selector: str = "[data-test='current-price'], [data-testid='price'], .priceView-customer-price"
+    seller_selector: str = "[data-test='seller'], [data-testid='seller'], .seller"
+
+
+# Additional retailers add an adapter entry after their public listing cards and IDs are verified.
+DISCOVERY_ADAPTERS = {
+    "Target": DiscoveryAdapter("target.com", r"/A-(\d+)(?:/|$)",
+                               '[data-test="product-card"], [data-test="productCard"], '
+                               '[data-test="product-grid"] article'),
+    "Best Buy": DiscoveryAdapter("bestbuy.com", r"^/(?:site/(?:.+/)?|product/.+/)(\d+)(?:\.p)?(?:/|$)",
+                                 '[data-testid="product-card"], .sku-item, article.product-card'),
+    "Safari Zone Collectibles": DiscoveryAdapter("safari-zone.com", r"^/products/([a-z0-9-]+)/?$", ""),
+}
+TYPE_PATTERNS = (
+    ("Pokemon Center ETB", r"pok[eé]mon center.*elite trainer box|elite trainer box.*pok[eé]mon center"),
+    ("ETB", r"elite trainer box|\betb\b"),
+    ("Booster Bundle", r"booster bundle"),
+    ("Booster Box/Mega Box", r"booster box|mega box"),
+    ("Premium Collection", r"premium collection"),
+    ("Poster Collection", r"poster collection"),
+    ("Sticker Collection", r"sticker collection"),
+    ("Pin Collection", r"pin collection"),
+    ("Collection/Box", r"collection|\bbox\b"),
+    ("Tin", r"\btin\b"),
+    ("Other Sealed TCG", r"blister|booster pack|battle deck|build.?battle|trading card game|\btcg\b"),
+)
+EXCLUDED = re.compile(r"binder|sleeve|playmat|plush|figure|shirt|keychain|poster only|storage|accessor|book", re.I)
+
+
+@dataclass(frozen=True)
+class Listing:
+    retailer: str
+    retailer_product_id: str
+    url: str
+    title: str
+    product_type: str | None
+    price: str | None
+    status: str
+    seller: str | None
+    release_date: str | None = None
+    metadata: dict | None = None
+
+
+def classify(title):
+    if not re.search(r"pok[eé]mon", title, re.I):
+        return None
+    excluded = EXCLUDED.search(title)
+    if excluded and not (excluded.group().lower() == "figure" and
+                         re.search(r"\btcg\b.*\bcollection\b", title, re.I)):
+        return None
+    for kind, pattern in TYPE_PATTERNS:
+        if re.search(pattern, title, re.I):
+            return kind
+    return None
+
+
+def canonical(retailer, url, retailer_product_id=None):
+    parts = urlsplit(url)
+    host = hostname(url)
+    adapter = DISCOVERY_ADAPTERS.get(retailer)
+    if not adapter or not belongs(host, adapter.domain):
+        raise ValueError("Listing URL is outside the source retailer")
+    if retailer == "Safari Zone Collectibles":
+        from .safari_zone import product_identity
+        handle = product_identity(url)
+        if not retailer_product_id or not str(retailer_product_id).isdigit():
+            raise ValueError("Safari Zone listing has no stable numeric product ID")
+        return str(retailer_product_id), f"https://safari-zone.com/products/{handle}"
+    match = re.search(adapter.identity_pattern, parts.path, re.I)
+    if not match:
+        raise ValueError("Listing has no stable retailer product ID")
+    clean = urlunsplit(("https", host, parts.path.rstrip("/"), "", ""))
+    return match.group(1), clean
+
+
+def validate_source(retailer, url):
+    adapter = DISCOVERY_ADAPTERS.get(retailer)
+    if not adapter:
+        raise ValueError("Discovery currently supports Target, Best Buy, and Safari Zone Collectibles only")
+    if retailer == "Safari Zone Collectibles":
+        from .safari_zone import COLLECTION_URL
+        if url.rstrip("/") != COLLECTION_URL:
+            raise ValueError("Use the Safari Zone Pokémon sealed-product collection URL")
+        if not public_host("safari-zone.com"):
+            raise ValueError("Safari Zone host does not resolve to a public address")
+        return COLLECTION_URL
+    host = hostname(url)
+    if not belongs(host, adapter.domain) or not public_host(host):
+        raise ValueError("Source must be a public URL on the selected retailer")
+    if retailer == "Best Buy":
+        from .bestbuy_api import source_filter
+        source_filter(url)
+    return url
+
+
+def parse_listings(retailer, source_url, html):
+    adapter = DISCOVERY_ADAPTERS.get(retailer)
+    if not adapter:
+        raise ValueError("Discovery adapter is not configured for this retailer")
+    soup = BeautifulSoup(html, "html.parser")
+    listings = {}
+    # Product cards are required so a site's navigation and recommendations are not inventory.
+    for card in soup.select(adapter.card_selector):
+        anchor = card.select_one("a[href]")
+        if not anchor:
+            continue
+        try:
+            product_id, url = canonical(retailer, urljoin(source_url, anchor["href"]))
+        except ValueError:
+            continue
+        title_node = card.select_one(adapter.title_selector)
+        title = (title_node or anchor).get_text(" ", strip=True)[:200]
+        if not title:
+            continue
+        price_node = card.select_one(adapter.price_selector)
+        price = price_value(price_node.get_text(" ", strip=True)) if price_node else None
+        seller_node = card.select_one(adapter.seller_selector)
+        seller = seller_node.get_text(" ", strip=True)[:200] if seller_node else None
+        status_text = card.get_text(" ", strip=True).lower()
+        status = ("OUT_OF_STOCK" if "sold out" in status_text or "out of stock" in status_text
+                  else "IN_STOCK" if "add to cart" in status_text or "add to bag" in status_text
+                  else "UNKNOWN")
+        date_node = card.select_one("time[datetime]")
+        listings[product_id] = Listing(retailer, product_id, url, title, classify(title), price,
+                                       status, seller, date_node.get("datetime") if date_node else None)
+    return list(listings.values())
+
+
+def fetch_source(source, session=None):
+    validate_source(source.retailer, source.url)
+    if source.retailer == "Safari Zone Collectibles":
+        from .safari_zone import discover
+        return discover(session=session)
+    if source.retailer == "Best Buy":
+        from .bestbuy_api import BestBuyAPI, normalized
+        products = BestBuyAPI(session=session).discover(source.url)
+        listings = []
+        for product in products:
+            item = normalized(product) if isinstance(product, dict) else None
+            if item:
+                kind = classify(item["title"]) if item["sealed_eligible"] else None
+                listings.append(Listing("Best Buy", item["sku"], item["url"], item["title"],
+                                        kind, item["price"], item["status"], None,
+                                        item["release_date"], {"image": item["image"]} if item["image"] else {}))
+        return listings
+    client = session or requests.Session()
+    response = client.get(source.url, headers={"User-Agent": "PokemonStockMonitor/2.0 (personal inventory notifications)",
+                                               "Accept": "text/html"}, timeout=(5, 15), allow_redirects=False)
+    if response.status_code != 200 or "text/html" not in response.headers.get("Content-Type", "text/html"):
+        raise ValueError(f"Source returned HTTP {response.status_code} or non-HTML content")
+    if len(response.content) > 2_000_000:
+        raise ValueError("Source page exceeds size limit")
+    listings = parse_listings(source.retailer, source.url, response.text)
+    if source.retailer == "Target" and not listings:
+        soup = BeautifulSoup(response.text, "html.parser")
+        if soup.select_one("#__NEXT_DATA__"):
+            raise ValueError("Target returned a client-loaded listing shell without product inventory; "
+                             "the silent baseline remains pending")
+    return listings
+
+
+def scan(db, source, listings, notify=None):
+    """Persist a complete scan; first successful scan is always silent."""
+    now = utcnow()
+    if not listings:
+        raise ValueError("No product cards found; scan was not accepted as a baseline")
+    baseline = not source.baseline_complete
+    created = []
+    accepted = 0
+    for listing in listings:
+        if listing.retailer != source.retailer:
+            continue
+        try:
+            product_id, url = canonical(source.retailer, listing.url, listing.retailer_product_id)
+        except ValueError:
+            continue
+        if product_id != listing.retailer_product_id:
+            continue
+        accepted += 1
+        seen = db.scalar(select(DiscoveredProduct).where(
+            DiscoveredProduct.retailer == source.retailer,
+            DiscoveredProduct.retailer_product_id == product_id))
+        if seen:
+            seen.last_seen_at = now
+            seen.url, seen.title, seen.product_type = url, listing.title[:200], listing.product_type
+            seen.price, seen.status, seen.seller = listing.price, listing.status, listing.seller
+            seen.release_date = listing.release_date
+            seen.metadata_json = json.dumps(listing.metadata or {})
+            continue
+        seen = DiscoveredProduct(source_id=source.id, retailer=source.retailer,
+                                 retailer_product_id=product_id, url=url, title=listing.title[:200],
+                                 product_type=listing.product_type, price=listing.price, status=listing.status,
+                                 seller=listing.seller, release_date=listing.release_date,
+                                 metadata_json=json.dumps(listing.metadata or {}), baseline=baseline)
+        db.add(seen)
+        db.flush()
+        if listing.product_type:
+            product = db.scalar(select(Product).where(Product.url == url))
+            if product is None:
+                product = Product(name=listing.title[:200], url=url, retailer=source.retailer,
+                                  retailer_product_id=product_id, product_type=listing.product_type,
+                                  seller=listing.seller, price=listing.price, next_check_at=now,
+                                  release_date=listing.release_date,
+                                  image_url=(listing.metadata or {}).get("image"))
+                db.add(product)
+                db.flush()
+            seen.product_id = product.id
+        if not baseline:
+            created.append(seen)
+    if not accepted:
+        raise ValueError("No valid retailer product IDs found; scan was not accepted as a baseline")
+    source.baseline_complete = True
+    source.last_scanned_at = now
+    interval = max(300, int(os.getenv("DISCOVERY_INTERVAL_SECONDS", "1800")))
+    source.next_scan_at = now + timedelta(seconds=interval)
+    source.last_error = None
+    db.commit()
+    for item in created:
+        if notify:
+            notify(item)
+    return created

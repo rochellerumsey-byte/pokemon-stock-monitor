@@ -1,0 +1,28 @@
+{
+  "total": 2,
+  "partial": false,
+  "products": [
+    {
+      "sku": 6608206,
+      "name": "Pokémon Trading Card Game: Prismatic Evolutions Booster Bundle",
+      "salePrice": 29.99,
+      "onlineAvailability": true,
+      "active": true,
+      "condition": "New",
+      "secondaryMarket": false,
+      "releaseDate": "2025-01-17",
+      "image": "https://pisces.bbystatic.com/image2/BestBuy_US/images/products/6608/6608206_sd.jpg",
+      "url": "https://api.bestbuy.com/click/example/6608206/pdp"
+    },
+    {
+      "sku": 6644221,
+      "name": "Pokémon Trading Card Game: Future Elite Trainer Box",
+      "salePrice": 54.99,
+      "onlineAvailability": false,
+      "active": true,
+      "condition": "New",
+      "releaseDate": "2099-10-01",
+      "url": "https://www.bestbuy.com/site/pokemon-future-elite-trainer-box/6644221.p"
+    }
+  ]
+}

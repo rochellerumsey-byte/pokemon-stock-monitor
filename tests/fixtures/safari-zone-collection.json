@@ -1,0 +1,5 @@
+{"products":[
+  {"id":8882828214454,"title":"Pokemon TCG: Lumiose City Mini Tin Display","handle":"pokemon-tcg-lumiose-city-mini-tin-display","vendor":"Safari Zone Collectibles","product_type":"","variants":[{"id":45424642654390,"price":"99.99","available":false}],"images":[{"src":"https://cdn.shopify.com/s/files/1/example/tin.png"}]},
+  {"id":8879383118006,"title":"Pokemon TCG: Mega Zygarde ex Premium Collection Box","handle":"pokemon-tcg-mega-zygarde-ex-premium-collection-box","vendor":"Safari Zone Collectibles","product_type":"","variants":[{"id":45412835000502,"price":"39.99","available":true}],"images":[{"src":"https://cdn.shopify.com/s/files/1/example/box.png"}]},
+  {"id":8879000000001,"title":"Pokemon TCG Card Sleeves","handle":"pokemon-tcg-card-sleeves","vendor":"Safari Zone Collectibles","variants":[{"id":4541000000001,"price":"8.99","available":true}],"images":[]}
+]}

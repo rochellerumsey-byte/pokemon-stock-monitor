@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pokémon Stock Monitor</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#1c2a30;background:#f4f7f8}body{max-width:1100px;margin:auto;padding:1rem}header{display:flex;justify-content:space-between;align-items:center}h1{font-size:1.6rem}h2{font-size:1.2rem;margin-top:0}section{background:white;padding:1.2rem;margin:1rem 0;border:1px solid #d7e0e2;border-radius:.6rem}input,select,button{font:inherit;padding:.5rem;margin:.2rem}input[type=text],input[type=url],input[type=password]{min-width:16rem;max-width:100%}button{background:#075b70;color:white;border:0;border-radius:.3rem;cursor:pointer}button.danger{background:#a22}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:.5rem;border-bottom:1px solid #ddd;vertical-align:top}small,.muted{color:#52646b}.row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}.flash{background:#fff0bc;padding:.6rem}.scroll{overflow:auto}.badge{font-weight:bold}label{display:block;margin:.4rem 0}textarea{width:100%;max-width:30rem}a{color:#075b70}
+</style></head><body>
+<header><h1>Pokémon Stock Monitor</h1>{% if session.admin %}<form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf_token() }}"><button>Log out</button></form>{% endif %}</header>
+{% for message in get_flashed_messages() %}<p class="flash">{{ message }}</p>{% endfor %}
+{% block content %}{% endblock %}
+</body></html>
